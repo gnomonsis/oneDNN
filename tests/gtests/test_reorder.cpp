@@ -24,18 +24,22 @@
 
 namespace mkldnn {
 
+auto extract_bit = [&](uint8_t val, uint8_t bit) -> uint8_t {
+    return ((val >> bit) & 0x1);
+};
+
 template <typename data_i_t, typename data_o_t>
 inline void check_reorder(const memory::desc &md_i, const memory::desc &md_o,
-        const data_i_t *src, const data_o_t *dst)
+        const data_i_t *src, const data_o_t *dst, const bool in_bin_type)
 {
     const int ndims = md_i.data.ndims;
     const ptrdiff_t *dims = md_i.data.dims;
     const size_t nelems = std::accumulate(
             dims, dims + ndims, size_t(1), std::multiplies<size_t>());
-
+    size_t elem_in_byte = in_bin_type ? 8 : 1;
     for (size_t i = 0; i < nelems; ++i) {
-        data_i_t s_raw = src[map_index(md_i, i, false)];
-        data_o_t s = static_cast<data_o_t>(s_raw);
+        data_i_t s_raw = src[map_index(md_i, i, false) / elem_in_byte];
+        data_o_t s = static_cast<data_o_t>(in_bin_type ? extract_bit(s_raw, map_index(md_i, i, false) % 8) : s_raw);
         data_o_t d = dst[map_index(md_o, i, false)];
         ASSERT_EQ(s, d) << "mismatch at position " << i;
     }
@@ -47,6 +51,7 @@ struct test_simple_params {
     memory::format fmt_i;
     memory::format fmt_o;
     memory::dims dims;
+    bool in_bin_type;
     bool expect_to_fail;
     mkldnn_status_t expected_status;
 };
@@ -76,19 +81,25 @@ protected:
         const size_t nelems = std::accumulate(p.dims.begin(), p.dims.end(),
                 size_t(1), std::multiplies<size_t>());
 
-        memory::data_type prec_i = data_traits<data_i_t>::data_type;
+        memory::data_type prec_i = p.in_bin_type ? mkldnn::memory::data_type::bin : data_traits<data_i_t>::data_type;
         memory::data_type prec_o = data_traits<data_o_t>::data_type;
         auto mpd_i = memory::primitive_desc({p.dims, prec_i, p.fmt_i},
                 eng);
         auto mpd_o = memory::primitive_desc({p.dims, prec_o, p.fmt_o},
                 eng);
 
-        auto src_data = new data_i_t[mpd_i.get_size()];
+        size_t elem_in_byte = p.in_bin_type ? 8 : 1;
+        auto src_data = new data_i_t[mpd_i.get_size() / elem_in_byte];
         auto dst_data = new data_o_t[mpd_o.get_size()];
 
         /* initialize input data */
-        for (size_t i = 0; i < nelems; ++i)
-            src_data[map_index(mpd_i.desc(), i, false)] = data_i_t(i);
+        if (p.in_bin_type) {
+            for (size_t i = 0; i < mpd_i.get_size() / 8; ++i)
+                src_data[i] = data_i_t(i);
+        } else {
+            for (size_t i = 0; i < nelems; ++i)
+                src_data[map_index(mpd_i.desc(), i, false)] = data_i_t(i);
+        }
 
         auto src = memory(mpd_i, src_data);
         auto dst = memory(mpd_o, dst_data);
@@ -96,7 +107,7 @@ protected:
         auto r = reorder(src, dst);
         stream(stream::kind::lazy).submit({r}).wait();
 
-        check_reorder(mpd_i.desc(), mpd_o.desc(), src_data, dst_data);
+        check_reorder(mpd_i.desc(), mpd_o.desc(), src_data, dst_data, p.in_bin_type);
         check_zero_tail<data_o_t>(0, dst);
 
         delete[] src_data;
@@ -108,6 +119,7 @@ using f32_f32 = std::pair<float, float>;
 using s32_s32 = std::pair<int32_t, int32_t>;
 using s16_s16 = std::pair<int16_t, int16_t>;
 using s8_s8 = std::pair<int8_t, int8_t>;
+using bin_f32 = std::pair<uint8_t, float>;
 
 using reorder_simple_corner_cases_f32_f32 = reorder_simple_test<f32_f32>;
 using reorder_padded_test_data_f32_f32 = reorder_simple_test<f32_f32>;
@@ -121,6 +133,7 @@ using reorder_simple_test_weights_f32_f32_IOhw16o16i = reorder_simple_test<f32_f
 using reorder_simple_test_s32_s32 = reorder_simple_test<s32_s32>;
 using reorder_simple_test_s16_s16 = reorder_simple_test<s16_s16>;
 using reorder_simple_test_s8_s8 = reorder_simple_test<s8_s8>;
+using reorder_simple_test_bin_f32 = reorder_simple_test<bin_f32>;
 
 using eng = engine::kind;
 using fmt = memory::format;
@@ -129,16 +142,18 @@ using test_simple_params_s32_s32 = test_simple_params<s32_s32>;
 using test_simple_params_f32_f32 = test_simple_params<f32_f32>;
 using test_simple_params_s16_s16 = test_simple_params<s16_s16>;
 using test_simple_params_s8_s8 = test_simple_params<s8_s8>;
+using test_simple_params_bin_f32 = test_simple_params<bin_f32>;
 
-using cfg_f32= test_simple_params_f32_f32;
-using cfg_s32= test_simple_params_s32_s32;
-using cfg_s16= test_simple_params_s16_s16;
-using cfg_s8= test_simple_params_s8_s8;
+using cfg_f32 = test_simple_params_f32_f32;
+using cfg_s32 = test_simple_params_s32_s32;
+using cfg_s16 = test_simple_params_s16_s16;
+using cfg_s8 = test_simple_params_s8_s8;
+using cfg_bin_f32 = test_simple_params_bin_f32;
 
 TEST_P(reorder_simple_corner_cases_f32_f32, TestsReorder) { }
 INSTANTIATE_TEST_SUITE_P(TestReorder, reorder_simple_corner_cases_f32_f32,
         ::testing::Values(
-            cfg_f32{eng::cpu, fmt::nchw, fmt::nc, {2, 16, 8, 8}, true, mkldnn_invalid_arguments},
+            cfg_f32{eng::cpu, fmt::nchw, fmt::nc, {2, 16, 8, 8}, false, true, mkldnn_invalid_arguments},
             cfg_f32{eng::cpu, fmt::nchw, fmt::nchw, {0, 16, 8, 8}},
             cfg_f32{eng::cpu, fmt::nchw, fmt::nChw8c, {0, 5, 8, 8}},
             cfg_f32{eng::cpu, fmt::nchw, fmt::nChw16c, {0, 5, 8, 8}},
@@ -385,6 +400,18 @@ INSTANTIATE_TEST_SUITE_P(TestReorder, reorder_simple_test_s8_s8,
             cfg_s8{eng::cpu, fmt::OIhw4i16o4i, fmt::oihw, {64, 64, 3, 3}},
             cfg_s8{eng::cpu, fmt::goihw, fmt::gOIhw4i16o4i, {2, 64, 64, 3, 3}},
             cfg_s8{eng::cpu, fmt::gOIhw4i16o4i, fmt::goihw, {2, 64, 64, 3, 3}}
+            )
+        );
+
+TEST_P(reorder_simple_test_bin_f32, TestsReorder) { }
+INSTANTIATE_TEST_SUITE_P(TestReorder, reorder_simple_test_bin_f32,
+        ::testing::Values(
+            cfg_bin_f32{eng::cpu, fmt::nhwc, fmt::nchw, {1, 5, 2, 2}, true},
+            cfg_bin_f32{eng::cpu, fmt::nhwc, fmt::nchw, {1, 7, 10, 8}, true},
+            cfg_bin_f32{eng::cpu, fmt::nhwc, fmt::nchw, {1, 12, 4, 11}, true},
+            cfg_bin_f32{eng::cpu, fmt::nhwc, fmt::nchw, {1, 8, 3, 9}, true},
+            cfg_bin_f32{eng::cpu, fmt::nhwc, fmt::nchw, {1, 16, 8, 8}, true},
+            cfg_bin_f32{eng::cpu, fmt::nhwc, fmt::nchw, {2, 27, 1, 2}, true}
             )
         );
 }
