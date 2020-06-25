@@ -248,8 +248,19 @@ void typed_zero_pad_generic_blocked(const memory_desc_wrapper &m_d,
         }
 
         if (need_zero) {
-            for (ptrdiff_t e0 = 0; e0 < step; ++e0)
-                data[m_d.off_l(e1 * step + e0, true)] = 0;
+            if (m_d.data_type() != mkldnn_bin) {
+                for (ptrdiff_t e0 = 0; e0 < step; ++e0)
+                    data[m_d.off_l(e1 * step + e0, true)] = 0;
+            } else {
+                uint8_t *ptr = reinterpret_cast<uint8_t *>(data);
+                for (ptrdiff_t e0 = 0; e0 < step; ++e0) {
+                    uint8_t mask = 0x01;
+                    size_t offset = m_d.off_l(e1 * step + e0, true);
+                    mask <<= offset % 8;
+                    mask = ~mask;
+                    ptr[m_d.off_l(e1 * step + e0, true) / 8] &= mask;
+                }
+            }
         }
     });
 }
