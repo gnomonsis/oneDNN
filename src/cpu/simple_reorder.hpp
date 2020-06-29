@@ -1043,7 +1043,7 @@ typename utils::enable_if<fmt_i == nhwc && fmt_o == nchw && (type_i != mkldnn_bi
         const memory_desc_wrapper &output_d, const primitive_attr_t *attr) {
         int smask = attr ? attr->output_scales_.mask_ : 0;
         return (smask == 0 || smask == 2) && order_keep && input_d._md->format == nhwc && output_d._md->format == nchw
-               && (type_i != mkldnn_bin || type_o != mkldnn_f32);
+               && (input_d.data_type() != bin || output_d.data_type() != f32);
     }
 
     GET_SCRATCHPAD_SIZE_ZERO();
