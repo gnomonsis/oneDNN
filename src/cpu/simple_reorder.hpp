@@ -1117,7 +1117,7 @@ typename utils::enable_if<fmt_i == nhwc && fmt_o == nchw && type_i == mkldnn_bin
             const int CB = div_up(C, nbits);
 
             auto extract_bit = [&](uint8_t val, uint8_t bit) -> float {
-                return static_cast<float>((val >> bit) & 0x1);
+                return static_cast<float>(((val >> bit) & 0x01) > 0 ? 1 : -1);
             };
 
             parallel_nd(N, H, W, [&](int n, int h, int w) {

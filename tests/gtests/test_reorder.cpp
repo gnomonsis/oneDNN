@@ -24,8 +24,8 @@
 
 namespace mkldnn {
 
-auto extract_bit = [&](uint8_t val, uint8_t bit) -> uint8_t {
-    return ((val >> bit) & 0x1);
+auto extract_bit = [&](uint8_t val, uint8_t bit) -> int8_t {
+    return ((val >> bit) & 0x1) > 0 ? 1 : -1;
 };
 
 template <typename data_i_t, typename data_o_t>
